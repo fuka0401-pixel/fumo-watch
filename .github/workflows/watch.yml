@@ -1,0 +1,70 @@
+name: fumo-watch
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"     # 10分おき(GitHub側の都合で数分遅れることがあります)
+  workflow_dispatch:            # 手動実行ボタン
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: fumo-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      # 前回の状態(state.json / run.log)を復元
+      - uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fumo-state-none
+          restore-keys: fumo-state-
+
+      - name: Check availability
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+        run: |
+          mkdir -p data
+          cd data
+          python ../fumo_watch.py        # 期間を変える場合は --start / --end を追加
+
+      # 失敗しても状態とページは保存・公開する
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: fumo-state-${{ github.run_id }}
+
+      - name: Prepare page
+        if: always()
+        run: |
+          mkdir -p site
+          cp data/status.html site/index.html 2>/dev/null || echo "<p>まだデータがありません</p>" > site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        if: always()
+        with:
+          path: site
+
+      - id: deploy
+        if: always()
+        uses: actions/deploy-pages@v4
